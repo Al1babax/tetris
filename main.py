@@ -7,102 +7,13 @@ from color import Colors
 import os
 
 """
-Game area: Leave two rows to top for generation of cubes, 20x10 area, 
+Game area: Leave two rows to top for generation of cubes, 20x10 area,
+600x300, 30x30 per rectangle 
 """
 
 
-class GenerateShape:
-    def __init__(self):
-        self.position = [100, 100]
-        self.dir_dict = {
-            "r": (30, 0),
-            "l": (-30, 0),
-            "u": (0, -30),
-            "d": (0, 30)
-        }
-        self.shape_str = [
-            [["r"], ["d"], ["u", "r"], []],
-            [["r"], ["r"], ["d"], []],
-            [["r"], ["d"], ["r"], []],
-            [["d"], ["r"], ["u"], []],
-            [["r"], ["u"], ["r"], []],
-            [["d"], ["u", "r"], ["r"], []],
-            [["r"], ["r"], ["r"], []]
-        ]
-        self.rec_size = 30
-        self.all_shapes = []
-        self.make_all_shapes()
-
-    def choose_random_shape(self):
-        return random.choice(self.all_shapes)
-
-    def make_all_shapes(self):
-        for shape in self.shape_str:
-            self.all_shapes.append(self.make_shape(shape))
-
-    def make_rectangle(self, directions):
-        start_x, start_y = self.position
-        rec_points = [(start_x, start_y), (start_x + self.rec_size, start_y),
-                      (start_x + self.rec_size, start_y + self.rec_size),
-                      (start_x, start_y + self.rec_size), (start_x, start_y)]
-
-        # Change starting position based on directions, (multiple to avoid duplicate draws
-        for direction in directions:
-            if not direction:
-                continue
-
-            self.position[0] += self.dir_dict[direction][0]
-            self.position[1] += self.dir_dict[direction][1]
-            rec_points.append((self.position[0], self.position[1]))
-
-        return rec_points
-
-    def back_to_start(self, str_dirs):
-        # Do draws in opposite order to not draw weird lines
-        points = []
-        for direction in str_dirs:
-            if not direction:
-                continue
-
-            direction_to_move = []
-            match direction:
-                case "u":
-                    direction_to_move = self.dir_dict["d"]
-                case "d":
-                    direction_to_move = self.dir_dict["u"]
-                case "l":
-                    direction_to_move = self.dir_dict["r"]
-                case "r":
-                    direction_to_move = self.dir_dict["l"]
-
-            self.position[0] += direction_to_move[0]
-            self.position[1] += direction_to_move[1]
-
-            points.append((self.position[0], self.position[1]))
-
-        return points
-
-    def make_shape(self, shape):
-        new_shape = []
-
-        # Draw main lines
-        for rec_str in shape:
-            new_shape.extend(self.make_rectangle(rec_str))
-
-        # Draw back to start
-        for rec_str in shape[::-1]:
-            new_shape.extend(self.back_to_start(rec_str))
-
-        print(self.position)
-
-        # Reset start position
-        self.position = [100, 100]
-
-        return new_shape
-
-
 class Render:
-    def __init__(self):
+    def __init__(self, engine):
         pygame.init()
 
         self.SCREEN_WIDTH = 800
@@ -113,41 +24,21 @@ class Render:
         self.clock = pygame.time.Clock()
         # Create a font object for rendering the FPS
         self.font = pygame.font.SysFont(None, 36)
-        # List for squares
-        self.squares: List[pygame.Rect] = []
-        self.rectangle_spawn_timer = 0.5
+
+        # Game engine
+        self.engine = engine
         self.timer = 0
+        # List for squares
         self.run = True
 
-    def create_rectangle(self, x: float, y: float, w: float, h: float) -> None:
-        square = pygame.Rect(x, y, w, h)
-        self.squares.append(square)
-
-    def draw_rectangles(self, color: Tuple[int, int, int]):
-        for square in self.squares:
-            pygame.draw.rect(self.screen, color, square)
-
-    def easy_collision(self, target_square: pygame.Rect) -> bool:
-        # Loop over other squares to check for collision
-        for square in self.squares:
-            if target_square == square:
-                continue
-
-            if target_square.bottomleft > square.bottomright or target_square.bottomright < square.bottomleft:
-                continue
-
-            if square.top == target_square.bottom:
-                return True
-
-        return False
-
-    def can_move(self, polygon) -> bool:
-        if polygon.bottom == 700:
-            return False
-
-        return True
-
     def handle_events(self):
+        key = pygame.key.get_pressed()
+
+        if key[pygame.K_LEFT]:
+            self.engine.move_shape("left")
+        elif key[pygame.K_RIGHT]:
+            self.engine.move_shape("right")
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.run = False
@@ -158,12 +49,6 @@ class Render:
         fps_text = self.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))  # White color
         self.screen.blit(fps_text, (10, 10))  # Draw the FPS text in the top left corner
 
-    def handle_spawn_timer(self):
-        if self.timer <= 0:
-            random_x = random.randint(50, 550)
-            self.create_rectangle(random_x, 100.0, 30.0, 30.0)
-            self.timer = self.rectangle_spawn_timer
-
     def draw_game_area(self):
         # Vertical lines
         pygame.draw.line(self.screen, (255, 255, 255), (250, 0), (250, 800), 5)
@@ -172,24 +57,40 @@ class Render:
         pygame.draw.line(self.screen, (255, 255, 255), (250, 100), (550, 100), 5)
         pygame.draw.line(self.screen, (255, 255, 255), (250, 700), (550, 700), 5)
 
-    def generate_random_shape(self):
-        pass
+    def draw_shapes(self):
+        cur_x = 250.0
+        cur_y = 100.0
+
+        for row in self.engine.state:
+            for cell in row:
+                if cell != 0:
+                    rectangle = pygame.Rect((cur_x, cur_y, 30, 30))
+                    color = self.engine.color_dict.get(cell)
+                    pygame.draw.rect(self.screen, color, rectangle, border_radius=6)
+
+                cur_x += 30
+
+            cur_x -= 300
+            cur_y += 30
 
     def execute(self):
-        shape_gen = GenerateShape()
         while self.run:
             self.screen.fill((0, 0, 0))
             self.draw_game_area()
-            pygame.draw.polygon(self.screen, (255, 255, 255), shape_gen.choose_random_shape(), width=4)
+            self.draw_shapes()
 
             self.handle_events()
             self.handle_fps()
 
             # Update the screen
             pygame.display.update()
+            # Update the engine
+            if self.timer <= 0:
+                self.engine.update()
+                self.timer = 0.1
 
             # Limit to 60 frames per second
-            dt = self.clock.tick(2) / 1000
+            dt = self.clock.tick(60) / 1000
             self.timer -= dt
 
         self.cleanup()
@@ -198,7 +99,7 @@ class Render:
         pygame.quit()
 
 
-class Game:
+class Engine:
     """
     Game state and logic
 
@@ -250,6 +151,7 @@ class Game:
                 [0, 0, 0, 0]
             ]
         ]
+
         # ID counter for objects
         self.id_counter = 0
         self.game_end = False
@@ -445,6 +347,26 @@ class Game:
 
                 cur_row -= 1
 
+    def move_shape(self, direction):
+        # Move falling shape to given direction by one block
+        pass
+
+    def tetris(self):
+        # Optimally only scan tetris row rows where last shape landed
+        # For now scan whole thing
+        for row in range(20):
+            boom = True
+            for col in range(10):
+                if col == 0:
+                    boom = False
+                    break
+
+            if not boom:
+                continue
+
+            for col in range(10):
+                self.state[row][col] = 0
+
     def update(self):
         # Spawn a new shape
         if self.spawn_new:
@@ -454,6 +376,9 @@ class Game:
 
             self.spawn_shape()
             self.spawn_new = False
+
+        # Check if tetris happened on any row
+        self.tetris()
 
         # Move primary target down
         for object_id in range(1, self.id_counter + 1):
@@ -469,7 +394,7 @@ class Game:
 
 
 def main():
-    game = Game()
+    game = Engine()
 
     while not game.game_end:
         game.update()
@@ -478,7 +403,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
 
-    # renderer = Render()
-    # renderer.execute()
+    engine = Engine()
+    renderer = Render(engine)
+    renderer.execute()
