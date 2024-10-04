@@ -1,4 +1,3 @@
-import random
 import pygame
 from typing import List, Tuple
 import random
@@ -26,7 +25,7 @@ class Render:
         self.font = pygame.font.SysFont(None, 36)
 
         # Game engine
-        self.engine = engine
+        self.engine: Engine = engine
         self.timer = 0
         # List for squares
         self.run = True
@@ -35,9 +34,9 @@ class Render:
         key = pygame.key.get_pressed()
 
         if key[pygame.K_LEFT]:
-            self.engine.move_shape("left")
+            self.engine.manual_move("left")
         elif key[pygame.K_RIGHT]:
-            self.engine.move_shape("right")
+            self.engine.manual_move("right")
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -156,8 +155,10 @@ class Engine:
         self.id_counter = 0
         self.game_end = False
 
-        self.last_spawned_object_x = None
-        self.last_spawned_object_y = None
+        # Save the coordinates for top left corner of the shape
+        self.last_spawned_object_id = None
+        self.last_spawned_object_row = None
+        self.last_spawned_object_col = None
         self.prev_color = None
 
         # Save color for each object id
@@ -191,7 +192,7 @@ class Engine:
         return new_color
 
     def print_state(self):
-        os.system("cls")
+        # os.system("cls")
         for row in self.state:
             for cell in row:
                 print(self.colorer.color_text(f" {cell} ", self.color_dict.get(cell)), end="")
@@ -199,15 +200,30 @@ class Engine:
 
         print("\n")
 
+    def assign_last_spawn_object_vars(self, random_shape, rand_col) -> None:
+        for col in range(4):
+            for row in range(1, -1, -1):
+                if random_shape[row][col] != 0:
+                    self.last_spawned_object_row = row
+                    self.last_spawned_object_col = col + rand_col
+                    return
+
     def spawn_shape(self):
         random_shape = random.choice(self.all_shapes)
+        # random_shape: List[List[int]] = self.all_shapes[4]
+
         new_id = self.gen_id()
 
         # Choose random col to spawn
         random_col = random.randint(0, 6)
 
+        # Save the position of spawned object for fast access later on (BOTTOM_LEFT_CORNER)
+        self.assign_last_spawn_object_vars(random_shape, random_col)
+        self.last_spawned_object_id = new_id
+
         for row in range(len(random_shape)):
             for col in range(len(random_shape[0])):
+                # Spawn rectangle to the shape
                 self.state[row][random_col + col] = 0 if random_shape[row][col] == 0 else new_id
 
         self.color_dict[new_id] = self.random_color()
@@ -248,9 +264,20 @@ class Engine:
                 if self.state[row][col] == object_id:
                     return row, col
 
-    def collision_detection(self, object_id):
+    def reset_falling_object_vars(self, object_id: int) -> None:
+        # If the main falling object hit bottom make fast access coordinates None
+        if object_id == self.last_spawned_object_id:
+            self.last_spawned_object_id = None
+            self.last_spawned_object_row = None
+            self.last_spawned_object_col = None
+
+    def collision_detection_vertical(self, object_id):
         # First find shape start
-        start_row, start_col = self.find_shape(object_id)
+        if object_id == self.last_spawned_object_id:
+            start_row = self.last_spawned_object_row
+            start_col = self.last_spawned_object_col
+        else:
+            start_row, start_col = self.find_shape_reverse(object_id)
 
         # Figure out which squares below the shape have to be checked
         # From starting position start looping through columns and then through rows
@@ -265,6 +292,7 @@ class Engine:
         # 3. if another object_id was found return True
         # 4. Go to next column
         cur_row, cur_col = start_row, start_col
+
         for col in range(4):
             # Find bottom rectangle
             cur_row, cur_col, object_found = self.find_rectangle(cur_row, cur_col, object_id)
@@ -277,12 +305,14 @@ class Engine:
             while self.state[cur_row][cur_col] == object_id:
                 # check if hit bottom
                 if cur_row == 19:
+                    self.reset_falling_object_vars(object_id)
                     return True
 
                 cur_row += 1
 
             # Check if hit other object
             if self.state[cur_row][cur_col] != 0:
+                self.reset_falling_object_vars(object_id)
                 return True
 
             cur_col += 1
@@ -291,6 +321,15 @@ class Engine:
                 break
 
         return False
+
+    def collision_detection_horizontal(self, start_row, start_col, direction):
+        """
+        Check for horizontal collision detection, start_row and start_col the most left or right bottom
+        rectangle of shape
+        :return: bool, True if collision happened
+        """
+        # This can only happen with user input, no need for object_id
+        pass
 
     def find_shape_reverse(self, object_id):
         for col in range(10):
@@ -310,7 +349,11 @@ class Engine:
     def move(self, object_id):
         # loop through cols and rows[::-1] and move everything down
         # First find shape start
-        start_row, start_col = self.find_shape_reverse(object_id)
+        if object_id == self.last_spawned_object_id:
+            start_row = self.last_spawned_object_row
+            start_col = self.last_spawned_object_col
+        else:
+            start_row, start_col = self.find_shape_reverse(object_id)
 
         # Use same logic as in collision detection:
         # Find the column lowest rectangle, and from there start moving recs down and check above if another
@@ -347,8 +390,72 @@ class Engine:
 
                 cur_row -= 1
 
-    def move_shape(self, direction):
-        # Move falling shape to given direction by one block
+        # Update the position for falling object
+        if object_id == self.last_spawned_object_id:
+            self.last_spawned_object_row += 1
+
+    def manual_move(self, direction: str) -> None:
+        """
+        Move falling shape to given direction by one block
+        :param direction: Left or right
+        :return:
+        """
+        # Based on left or right get to most left or right column of the shape
+        start_row = self.last_spawned_object_row
+        start_col = self.last_spawned_object_col
+
+        if direction == "right":
+            # Go the most right col that still has the object id
+            # Max 3 steps to right aka cols and 2 steps up/down aka rows
+            for col in range(3):
+                # Move right
+                start_col += 1
+                # Move 2 up to start checking the col from top to bottom
+                start_row -= 2
+                # Do not go out of bounds
+                if start_col > 9:
+                    continue
+
+                for row in range(4):
+                    if start_row + row < 0 or start_row + row > 19:
+                        start_row += 1
+                        continue
+
+                    # Check if right id found from col
+                    if self.state[start_row][start_col] == self.last_spawned_object_id:
+                        break
+
+                    start_row += 1
+                else:
+                    # Incase no new column was added aka found id on right col
+                    start_row -= 2
+                    start_col -= 1
+                    break
+
+        # Make certain object is not horizontally hitting something
+        if self.collision_detection_horizontal():
+            return
+
+        # Move every id column per column to right or left
+        if direction == "left":
+            for col in range(4):
+                start_row -= 4
+
+                for row in range(4):
+                    pass
+
+
+        elif direction == "right":
+            pass
+
+        print(start_row, start_col)
+
+    def manual_rotate(self, direction: str) -> None:
+        """
+        Rotates the falling shape clockwise or counter-clockwise
+        :param direction: clock
+        :return:
+        """
         pass
 
     def tetris(self):
@@ -368,6 +475,8 @@ class Engine:
                 self.state[row][col] = 0
 
     def update(self):
+        # print(self.last_spawned_object_id)
+        # print(self.last_spawned_object_row, self.last_spawned_object_col)
         # Spawn a new shape
         if self.spawn_new:
             if self.lazy_game_end():
@@ -380,9 +489,12 @@ class Engine:
         # Check if tetris happened on any row
         self.tetris()
 
+        # Move target right
+        self.manual_move("right")
+
         # Move primary target down
         for object_id in range(1, self.id_counter + 1):
-            collision_bool = self.collision_detection(object_id)
+            collision_bool = self.collision_detection_vertical(object_id)
 
             # If no collision move down
             if not collision_bool:
@@ -399,12 +511,13 @@ def main():
     while not game.game_end:
         game.update()
         game.print_state()
-        time.sleep(0.3)
+        time.sleep(0.1)
+        break
 
 
 if __name__ == '__main__':
-    # main()
+    main()
 
-    engine = Engine()
-    renderer = Render(engine)
-    renderer.execute()
+    # engine = Engine()
+    # renderer = Render(engine)
+    # renderer.execute()
