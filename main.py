@@ -1,3 +1,5 @@
+from functools import total_ordering
+
 import pygame
 from typing import List, Tuple
 import random
@@ -104,21 +106,23 @@ class Render:
 
 class Engine:
     """
-    Game state and logic
+    Game state:
 
     Game will be a grid of 20x10 rows:20, cols:10
-
     New shapes will spawn in the first 2 rows in top
-
     New shape is max size 2x4
 
-    Between every update the last spawned object will do collision calc
-    to see if it can still drop down
+    Update loop (in order):
 
-    If row is full of numbers Tetris will happen and that line disappear
-    Every shape above this tetris row will drop down and have to be calculated
+    1. If tetris mode: Keep only updating the falling pieces and return
+    2. Primary shape exists: Keep dropping the primary piece, also if tetris mode can happen
+    3. No primary shape: generate one
+
+    Score and level system:
+
+    Every 10 tetris cleared a new level will begin
+    Score is calculated based on this formula points_for_tetris_lines * (level + 1)
     """
-
     def __init__(self):
         self.state = []
         self.init_state()
@@ -164,7 +168,12 @@ class Engine:
         self.last_spawned_object_row = None
         self.last_spawned_object_col = None
         self.prev_color = None
-        self.is_tetris = False
+
+        self.prev_tetris_row = 0
+        self.total_tetris_rows = 0
+
+        self.level = 0
+        self.score = 0
 
         # Save color for each object id
         self.color_dict = {
@@ -566,20 +575,31 @@ class Engine:
         pass
 
     def tetris(self) -> None:
+        tetris_count = 0
+
         # scan whole thing
         for row in range(20):
-            boom = True
-            for col in range(10):
-                if col == 0:
-                    boom = False
-                    break
-
-            if not boom:
+            if 0 in self.state[row]:
                 continue
 
-            self.is_tetris = True
+            self.prev_tetris_row += 1
             for col in range(10):
                 self.state[row][col] = 0
+
+        if tetris_count != 0:
+            self.total_tetris_rows += tetris_count
+            match tetris_count:
+                case 1:
+                    self.score = 40 * (self.level + 1)
+                case 2:
+                    self.score = 80 * (self.level + 1)
+                case 3:
+                    self.score = 300 * (self.level + 1)
+                case 4:
+                    self.score = 1200 * (self.level + 1)
+
+            # Update level
+
 
     def update(self):
         """
@@ -589,7 +609,8 @@ class Engine:
         3. Spawn new primary object if not exists
         :return:
         """
-        if self.is_tetris:
+        # Use prev_tetris count to know how many updates to skip for falling tetris parts
+        if self.prev_tetris_row > 0:
             for object_id in range(1, self.id_counter + 1):
                 collision_bool = self.collision_detection_vertical(object_id)
 
@@ -597,9 +618,11 @@ class Engine:
                 if not collision_bool:
                     self.move(object_id)
 
-            self.is_tetris = False
+            self.prev_tetris_row -= 1
             # Check for cascading tetris
-            self.tetris()
+            if self.prev_tetris_row == 0:
+                self.tetris()
+
             return
 
         # Move primary down
@@ -623,12 +646,6 @@ class Engine:
 
             self.spawn_shape()
             self.spawn_new = False
-
-        # Move target right
-        # if self.last_spawned_object_id is not None:
-        #     # self.manual_move("right")
-        #     self.manual_move("left")
-
 
 def main():
     game = Engine()
