@@ -27,16 +27,19 @@ class Render:
         # Game engine
         self.engine: Engine = engine
         self.timer = 0
+        self.move_timer = 0
         # List for squares
         self.run = True
 
     def handle_events(self):
         key = pygame.key.get_pressed()
 
-        if key[pygame.K_LEFT]:
+        if key[pygame.K_LEFT] and self.move_timer <= 0:
             self.engine.manual_move("left")
-        elif key[pygame.K_RIGHT]:
+            self.move_timer = 0.08
+        elif key[pygame.K_RIGHT] and self.move_timer <= 0:
             self.engine.manual_move("right")
+            self.move_timer = 0.08
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -86,11 +89,12 @@ class Render:
             # Update the engine
             if self.timer <= 0:
                 self.engine.update()
-                self.timer = 0.1
+                self.timer = 0.3
 
             # Limit to 60 frames per second
             dt = self.clock.tick(60) / 1000
             self.timer -= dt
+            self.move_timer -= dt
 
         self.cleanup()
 
@@ -160,6 +164,7 @@ class Engine:
         self.last_spawned_object_row = None
         self.last_spawned_object_col = None
         self.prev_color = None
+        self.is_tetris = False
 
         # Save color for each object id
         self.color_dict = {
@@ -390,6 +395,49 @@ class Engine:
 
         return False
 
+    def bottom_left_rectangle(self, cur_row, cur_col, object_id) -> (int, int):
+        # Start looking for object id 4 cols from the left to right
+        best_position = [cur_row, cur_col]
+
+        def dfs(row, col, object_id):
+            if row < 0 or row > 19 or col < 0 or col > 9:
+                return
+
+            # If object_id not found return
+            if self.state[row][col] != object_id:
+                return
+
+            # If found more left object
+            if col < best_position[1]:
+                best_position[0], best_position[1] = row, col
+            # If found more bottom left object
+            elif col == best_position[1] and row > best_position[0]:
+                best_position[0], best_position[1] = row, col
+
+            # Travel left, top, bottom
+            moves = [(0, -1), (-1, 0), (1, 0)]
+            for move in moves:
+                dfs(row + move[0], col + move[1], object_id)
+
+        dfs(cur_row, cur_col, object_id)
+
+        return best_position[0], best_position[1]
+
+    def bottom_column_position(self, cur_row, cur_col, object_id):
+        # Get to the bottom in this col
+        for _ in range(4):
+            # First there is object below
+            if cur_row + 1 <= 19 and self.state[cur_row + 1][cur_col] == object_id:
+                cur_row += 1
+            # We are at lowest
+            elif self.state[cur_row][cur_col] == object_id:
+                break
+            # Have to go up to find the bottom
+            elif cur_row - 1 >= 0:
+                cur_row -= 1
+
+        return cur_row, cur_col
+
     def move(self, object_id):
         # loop through cols and rows[::-1] and move everything down
         # First find shape start
@@ -399,40 +447,36 @@ class Engine:
         else:
             start_row, start_col = self.find_shape_reverse(object_id)
 
-        # Use same logic as in collision detection:
-        # Find the column lowest rectangle, and from there start moving recs down and check above if another
-        # one needs moving
+        # 1. Find the bottom left rectangle if not primary object
+        if object_id != self.last_spawned_object_id:
+            start_row, start_col = self.bottom_left_rectangle(start_row, start_col, object_id)
 
+        # 2. Col by col move every id in that col down
+        cur_row, cur_col = start_row, start_col
         for col in range(4):
             # Out of bounds
-            if start_col + col > 10:
+            if cur_col < 0 or cur_col > 9:
+                cur_col += 1
                 continue
 
-            cur_row, cur_col = start_row, start_col + col
-            # Find rectangle
-            cur_row, cur_col, object_found = self.find_rectangle(cur_row, cur_col, object_id)
+            # Get to the bottom in this col
+            cur_row, cur_col = self.bottom_column_position(cur_row, cur_col, object_id)
+            for row in range(4):
+                if cur_row < 0 or cur_row > 19:
+                    cur_row -= 1
+                    continue
 
-            if not object_found:
-                break
+                # Do not move 0
+                if self.state[cur_row][cur_col] == 0:
+                    cur_row -= 1
+                    continue
 
-            # Travel to bottom
-            while self.state[cur_row][cur_col] == object_id:
-                cur_row += 1
-
-            # Move up once
-            cur_row -= 1
-
-            # Move every rectangle in the column down
-            while True:
-                # Move
                 self.state[cur_row + 1][cur_col] = self.state[cur_row][cur_col]
                 self.state[cur_row][cur_col] = 0
-
-                # Check if more recs above, if so move pointer up
-                if self.state[cur_row - 1][cur_col] != object_id:
-                    break
-
                 cur_row -= 1
+
+            cur_row += 4
+            cur_col += 1
 
         # Update the position for falling object
         if object_id == self.last_spawned_object_id:
@@ -444,71 +488,74 @@ class Engine:
         :param direction: Left or right
         :return:
         """
+        if self.last_spawned_object_id is None:
+            return
+
         # Based on left or right get to most left or right column of the shape
         start_row = self.last_spawned_object_row
         start_col = self.last_spawned_object_col
 
         if direction == "right":
-            # Go the most right col that still has the object id
-            # Max 3 steps to right aka cols and 2 steps up/down aka rows
-            for col in range(3):
-                # Move right
-                start_col += 1
-                # Move 2 up to start checking the col from top to bottom
-                start_row -= 2
-                # Do not go out of bounds
-                if start_col > 9:
-                    continue
+            most_right = [start_row, start_col]
 
-                for row in range(4):
-                    if start_row + row < 0 or start_row + row > 19:
-                        start_row += 1
-                        continue
+            def dfs(row, col, object_id, visited_nodes: List):
+                # Check out of bounds
+                if not (0 <= row <= 19) or not (0 <= col <= 9):
+                    return
+                # Check if path still valid
+                if self.state[row][col] != object_id:
+                    return
+                if (row, col) in visited_nodes:
+                    return
 
-                    # Check if right id found from col
-                    if self.state[start_row][start_col] == self.last_spawned_object_id:
-                        break
+                if col > most_right[1]:
+                    most_right[0], most_right[1] = row, col
 
-                    start_row += 1
-                else:
-                    # Incase no new column was added aka found id on right col
-                    start_row -= 2
-                    start_col -= 1
-                    break
+                # Travel right, top, bottom
+                moves = [(0, 1), (-1, 0), (1, 0)]
+                for move in moves:
+                    visited_nodes.append((row, col))
+                    dfs(row + move[0], col + move[1], object_id, visited_nodes)
+                    visited_nodes.pop()
+
+            dfs(start_row, start_col, self.last_spawned_object_id, [])
+            start_row, start_col = most_right[0], most_right[1]
 
         # Make certain object is not horizontally hitting something
         if self.collision_detection_horizontal(start_row, start_col, direction):
+            print("object hitting wall")
             return
 
         # Move every id column per column to right or left
-        if direction == "right":
-            cur_row, cur_col = start_row, start_col
-            for col in range(4):
-                if cur_col < 0 or cur_col > 9:
-                    cur_col -= 1
+        cur_row, cur_col = start_row, start_col
+        for col in range(4):
+            if cur_col < 0 or cur_col > 9:
+                cur_col = cur_col - 1 if direction == "right" else cur_col + 1
+                continue
+
+            cur_row, cur_col = self.bottom_column_position(cur_row, cur_col, self.last_spawned_object_id)
+            for row in range(4):
+                if cur_row < 0 or cur_row > 19:
+                    cur_row -= 1
+                    continue
+                # Do not move 0
+                if self.state[cur_row][cur_col] != self.last_spawned_object_id:
+                    cur_row -= 1
                     continue
 
-                cur_row -= 3
-                for row in range(4):
-                    if cur_row < 0 or cur_row > 19:
-                        cur_row += 1
-                        continue
-
-                    # Do not move 0
-                    if self.state[cur_row][cur_col] != self.last_spawned_object_id:
-                        cur_row += 1
-                        continue
-
+                if direction == "right":
                     self.state[cur_row][cur_col + 1] = self.state[cur_row][cur_col]
-                    self.state[cur_row][cur_col] = 0
-                    cur_row += 1
+                elif direction == "left":
+                    self.state[cur_row][cur_col - 1] = self.state[cur_row][cur_col]
 
-                cur_col -= 1
+                self.state[cur_row][cur_col] = 0
+                cur_row -= 1
 
-            self.last_spawned_object_col += 1
+            cur_row += 4
+            cur_col = cur_col - 1 if direction == "right" else cur_col + 1
 
-
-        # print(start_row, start_col)
+        self.last_spawned_object_col = self.last_spawned_object_col + 1 if direction == "right" \
+            else self.last_spawned_object_col - 1
 
     def manual_rotate(self, direction: str) -> None:
         """
@@ -518,9 +565,8 @@ class Engine:
         """
         pass
 
-    def tetris(self):
-        # Optimally only scan tetris row rows where last shape landed
-        # For now scan whole thing
+    def tetris(self) -> None:
+        # scan whole thing
         for row in range(20):
             boom = True
             for col in range(10):
@@ -531,12 +577,44 @@ class Engine:
             if not boom:
                 continue
 
+            self.is_tetris = True
             for col in range(10):
                 self.state[row][col] = 0
 
     def update(self):
-        # print(self.last_spawned_object_id)
-        # print(self.last_spawned_object_row, self.last_spawned_object_col)
+        """
+        Steps to happen
+        1. Loop until tetris over update all object to fall
+        2. Move primary object if exists
+        3. Spawn new primary object if not exists
+        :return:
+        """
+        if self.is_tetris:
+            for object_id in range(1, self.id_counter + 1):
+                collision_bool = self.collision_detection_vertical(object_id)
+
+                # If no collision move down
+                if not collision_bool:
+                    self.move(object_id)
+
+            self.is_tetris = False
+            # Check for cascading tetris
+            self.tetris()
+            return
+
+        # Move primary down
+        if self.last_spawned_object_id:
+            collision_bool = self.collision_detection_vertical(self.last_spawned_object_id)
+
+            # If no collision move down
+            if not collision_bool:
+                self.move(self.last_spawned_object_id)
+            # If collided object was last spawned, spawn new one
+            else:
+                # Check for tetris
+                self.tetris()
+                self.spawn_new = True
+
         # Spawn a new shape
         if self.spawn_new:
             if self.lazy_game_end():
@@ -546,28 +624,11 @@ class Engine:
             self.spawn_shape()
             self.spawn_new = False
 
-        # Check if tetris happened on any row
-        self.tetris()
-
-
-        # Move primary target down
-        for object_id in range(1, self.id_counter + 1):
-            collision_bool = self.collision_detection_vertical(object_id)
-
-            # If no collision move down
-            if not collision_bool:
-                self.move(object_id)
-
-            # If collided object was last spawned, spawn new one
-            elif object_id == self.id_counter:
-                self.spawn_new = True
-
         # Move target right
-        if self.last_spawned_object_id is not None:
-            self.manual_move("right")
-            # self.manual_move("left")
+        # if self.last_spawned_object_id is not None:
+        #     # self.manual_move("right")
+        #     self.manual_move("left")
 
-        print(self.last_spawned_object_row, self.last_spawned_object_col)
 
 def main():
     game = Engine()
@@ -580,8 +641,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
 
-    # engine = Engine()
-    # renderer = Render(engine)
-    # renderer.execute()
+    engine = Engine()
+    renderer = Render(engine)
+    renderer.execute()
