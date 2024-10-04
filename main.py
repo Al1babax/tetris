@@ -322,14 +322,58 @@ class Engine:
 
         return False
 
-    def collision_detection_horizontal(self, start_row, start_col, direction):
+    def collision_detection_horizontal(self, start_row, start_col, side):
         """
         Check for horizontal collision detection, start_row and start_col the most left or right bottom
         rectangle of shape
+        Read collision_detection_vertical for more info
+        :param start_row:
+        :param start_col:
+        :param side: str, which side to check for collision
         :return: bool, True if collision happened
         """
-        # This can only happen with user input, no need for object_id
-        pass
+        # Check every surface from left or right side depending on direction
+        # Check each row separately
+        cur_row, cur_col = start_row, start_col
+        cur_row -= 3
+        for row in range(4):
+            if cur_row < 0:
+                cur_row += 1
+                continue
+
+            id_found = False
+
+            # Go left max 4 in that row until object id found, if not found stop because shape ended and return
+            for col in range(4):
+                if cur_col < 0 or cur_col > 9:
+                    continue
+
+                if self.state[cur_row][cur_col] == self.last_spawned_object_id:
+                    id_found = True
+                    break
+
+                if side == "right":
+                    cur_col -= 1
+                elif side == "left":
+                    cur_col += 1
+
+            if not id_found:
+                cur_row += 1
+                cur_col = start_col
+                continue
+
+            # Check if collision happens
+            if side == "right":
+                if cur_col + 1 == 10 or self.state[cur_row][cur_col + 1] != 0:
+                    return True
+            elif side == "left":
+                if cur_col - 1 == -1 or self.state[cur_row][cur_col - 1] != 0:
+                    return True
+
+            cur_row += 1
+            cur_col = start_col
+
+        return False
 
     def find_shape_reverse(self, object_id):
         for col in range(10):
@@ -433,22 +477,38 @@ class Engine:
                     break
 
         # Make certain object is not horizontally hitting something
-        if self.collision_detection_horizontal():
+        if self.collision_detection_horizontal(start_row, start_col, direction):
             return
 
         # Move every id column per column to right or left
-        if direction == "left":
+        if direction == "right":
+            cur_row, cur_col = start_row, start_col
             for col in range(4):
-                start_row -= 4
+                if cur_col < 0 or cur_col > 9:
+                    cur_col -= 1
+                    continue
 
+                cur_row -= 3
                 for row in range(4):
-                    pass
+                    if cur_row < 0 or cur_row > 19:
+                        cur_row += 1
+                        continue
+
+                    # Do not move 0
+                    if self.state[cur_row][cur_col] != self.last_spawned_object_id:
+                        cur_row += 1
+                        continue
+
+                    self.state[cur_row][cur_col + 1] = self.state[cur_row][cur_col]
+                    self.state[cur_row][cur_col] = 0
+                    cur_row += 1
+
+                cur_col -= 1
+
+            self.last_spawned_object_col += 1
 
 
-        elif direction == "right":
-            pass
-
-        print(start_row, start_col)
+        # print(start_row, start_col)
 
     def manual_rotate(self, direction: str) -> None:
         """
@@ -489,8 +549,6 @@ class Engine:
         # Check if tetris happened on any row
         self.tetris()
 
-        # Move target right
-        self.manual_move("right")
 
         # Move primary target down
         for object_id in range(1, self.id_counter + 1):
@@ -504,6 +562,12 @@ class Engine:
             elif object_id == self.id_counter:
                 self.spawn_new = True
 
+        # Move target right
+        if self.last_spawned_object_id is not None:
+            self.manual_move("right")
+            # self.manual_move("left")
+
+        print(self.last_spawned_object_row, self.last_spawned_object_col)
 
 def main():
     game = Engine()
@@ -511,8 +575,8 @@ def main():
     while not game.game_end:
         game.update()
         game.print_state()
-        time.sleep(0.1)
-        break
+        time.sleep(0.5)
+        # break
 
 
 if __name__ == '__main__':
