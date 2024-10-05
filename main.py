@@ -1,7 +1,5 @@
-from functools import total_ordering
-
 import pygame
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import random
 import time
 from color import Colors
@@ -13,9 +11,45 @@ Game area: Leave two rows to top for generation of cubes, 20x10 area,
 """
 
 
+class Sound:
+    def __init__(self, volume=0.4):
+        pygame.mixer.init()
+        pygame.mixer.music.set_volume(volume)
+        self.soundtrack_dict = {
+            "main": "soundtracks/1 - Music 1.mp3",
+            "move": "soundtracks/SFX 4.mp3"
+        }
+
+    def load(self, track):
+        pygame.mixer.music.load(self.soundtrack_dict[track])
+
+    def unload(self):
+        pygame.mixer.music.unload()
+
+    def play(self):
+        pygame.mixer.music.play(loops=0)
+
+    def pause(self):
+        pygame.mixer.music.pause()
+
+    def unpause(self):
+        pygame.mixer.music.unpause()
+
+    def restart(self):
+        pygame.mixer.music.rewind()
+
+    def stop(self):
+        pygame.mixer.music.stop()
+
+
 class Render:
-    def __init__(self, engine):
+    def __init__(self, engine, enable_sound=True):
         pygame.init()
+
+        # Sound stuff
+        self.enable_sound = enable_sound
+        self.main_track = Sound()
+        self.main_track.load("main")
 
         self.SCREEN_WIDTH = 800
         self.SCREEN_HEIGHT = 800
@@ -37,15 +71,18 @@ class Render:
         key = pygame.key.get_pressed()
 
         if key[pygame.K_LEFT] and self.move_timer <= 0:
+            pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
             self.engine.manual_move("left")
-            self.move_timer = 0.08
+            self.move_timer = 0.15
         elif key[pygame.K_RIGHT] and self.move_timer <= 0:
+            pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
             self.engine.manual_move("right")
-            self.move_timer = 0.08
+            self.move_timer = 0.15
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.run = False
+                self.engine.game_end = True
 
     def handle_fps(self):
         # Calculate and display FPS
@@ -78,7 +115,10 @@ class Render:
             cur_y += 30
 
     def execute(self):
-        while self.run:
+        if self.enable_sound:
+            self.main_track.play()
+
+        while not self.engine.game_end:
             self.screen.fill((0, 0, 0))
             self.draw_game_area()
             self.draw_shapes()
@@ -123,6 +163,11 @@ class Engine:
     Every 10 tetris cleared a new level will begin
     Score is calculated based on this formula points_for_tetris_lines * (level + 1)
     """
+
+    # TODO: rotation collision
+    # TODO: rotation
+    # TODO: level change
+
     def __init__(self):
         self.state = []
         self.init_state()
@@ -164,10 +209,12 @@ class Engine:
         self.game_end = False
 
         # Save the coordinates for top left corner of the shape
-        self.last_spawned_object_id = None
-        self.last_spawned_object_row = None
-        self.last_spawned_object_col = None
-        self.prev_color = None
+        self.last_spawned_object_id: Optional[int] = None
+        self.last_spawned_object_row: Optional[int] = None
+        self.last_spawned_object_col: Optional[int] = None
+        self.last_spawned_shape_id: Optional[int] = None  # Save the index based on all_shapes array
+        self.last_spawned_center: Optional[List[int, int]] = None  # Used for tracking the center for rotation
+        self.prev_color: Optional[str] = None
 
         self.prev_tetris_row = 0
         self.total_tetris_rows = 0
@@ -223,13 +270,15 @@ class Engine:
                     return
 
     def spawn_shape(self):
-        random_shape = random.choice(self.all_shapes)
-        # random_shape: List[List[int]] = self.all_shapes[4]
+        random_int = random.randint(0, 5)
+        self.last_spawned_shape_id = random_int
+        random_shape = self.all_shapes[random_int]
 
         new_id = self.gen_id()
 
         # Choose random col to spawn
         random_col = random.randint(0, 6)
+        self.last_spawned_center = [0, random_col + 1]
 
         # Save the position of spawned object for fast access later on (BOTTOM_LEFT_CORNER)
         self.assign_last_spawn_object_vars(random_shape, random_col)
@@ -284,6 +333,8 @@ class Engine:
             self.last_spawned_object_id = None
             self.last_spawned_object_row = None
             self.last_spawned_object_col = None
+            self.last_spawned_shape_id = None
+            self.last_spawned_center = None
 
     def collision_detection_vertical(self, object_id):
         # First find shape start
@@ -490,6 +541,7 @@ class Engine:
         # Update the position for falling object
         if object_id == self.last_spawned_object_id:
             self.last_spawned_object_row += 1
+            self.last_spawned_center[0] += 1
 
     def manual_move(self, direction: str) -> None:
         """
@@ -563,15 +615,23 @@ class Engine:
             cur_row += 4
             cur_col = cur_col - 1 if direction == "right" else cur_col + 1
 
-        self.last_spawned_object_col = self.last_spawned_object_col + 1 if direction == "right" \
-            else self.last_spawned_object_col - 1
+        if direction == "right":
+            self.last_spawned_object_col += 1
+            self.last_spawned_center[1] += 1
+        elif direction == "left":
+            self.last_spawned_object_col -= 1
+            self.last_spawned_center[1] -= 1
 
-    def manual_rotate(self, direction: str) -> None:
+    def rotate_collision(self):
+        pass
+
+    def manual_rotate(self) -> None:
         """
-        Rotates the falling shape clockwise or counter-clockwise
-        :param direction: clock
+        Rotates the falling shape clockwise
         :return:
         """
+        if self.last_spawned_object_id is None or self.rotate_collision:
+            return
         pass
 
     def tetris(self) -> None:
@@ -583,10 +643,12 @@ class Engine:
                 continue
 
             self.prev_tetris_row += 1
+            tetris_count += 1
             for col in range(10):
                 self.state[row][col] = 0
 
         if tetris_count != 0:
+            pygame.mixer.Sound("soundtracks/SFX 10.mp3").play()
             self.total_tetris_rows += tetris_count
             match tetris_count:
                 case 1:
@@ -599,7 +661,6 @@ class Engine:
                     self.score = 1200 * (self.level + 1)
 
             # Update level
-
 
     def update(self):
         """
@@ -646,6 +707,7 @@ class Engine:
 
             self.spawn_shape()
             self.spawn_new = False
+
 
 def main():
     game = Engine()
