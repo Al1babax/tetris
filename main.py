@@ -43,7 +43,7 @@ class Sound:
 
 
 class Render:
-    def __init__(self, engine, enable_sound=True):
+    def __init__(self, engine, enable_sound=False):
         pygame.init()
 
         # Sound stuff
@@ -71,13 +71,20 @@ class Render:
         key = pygame.key.get_pressed()
 
         if key[pygame.K_LEFT] and self.move_timer <= 0:
-            pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
+            if self.enable_sound:
+                pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
             self.engine.manual_move("left")
             self.move_timer = 0.15
         elif key[pygame.K_RIGHT] and self.move_timer <= 0:
-            pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
+            if self.enable_sound:
+                pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
             self.engine.manual_move("right")
             self.move_timer = 0.15
+        elif key[pygame.K_UP] and self.move_timer <= 0:
+            if self.enable_sound:
+                pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
+            self.engine.manual_rotate()
+            self.move_timer = 1
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -254,9 +261,11 @@ class Engine:
 
     def print_state(self):
         # os.system("cls")
-        for row in self.state:
-            for cell in row:
-                print(self.colorer.color_text(f" {cell} ", self.color_dict.get(cell)), end="")
+        for i, row in enumerate(self.state):
+            for j, cell in enumerate(row):
+                color = "white" if (self.last_spawned_center[0] == i and self.last_spawned_center[
+                    1] == j) else self.color_dict.get(cell)
+                print(self.colorer.color_text(f" {cell} ", color), end="")
             print("\n", end="")
 
         print("\n")
@@ -273,12 +282,13 @@ class Engine:
         random_int = random.randint(0, 5)
         self.last_spawned_shape_id = random_int
         random_shape = self.all_shapes[random_int]
+        # random_shape = self.all_shapes[2]
 
         new_id = self.gen_id()
 
         # Choose random col to spawn
         random_col = random.randint(0, 6)
-        self.last_spawned_center = [0, random_col + 1]
+        self.last_spawned_center = [1, random_col + 1]
 
         # Save the position of spawned object for fast access later on (BOTTOM_LEFT_CORNER)
         self.assign_last_spawn_object_vars(random_shape, random_col)
@@ -622,17 +632,135 @@ class Engine:
             self.last_spawned_object_col -= 1
             self.last_spawned_center[1] -= 1
 
-    def rotate_collision(self):
-        pass
-
     def manual_rotate(self) -> None:
         """
         Rotates the falling shape clockwise
         :return:
         """
-        if self.last_spawned_object_id is None or self.rotate_collision:
+        print("trying to rotate")
+        if self.last_spawned_object_id is None:
             return
-        pass
+
+        if self.last_spawned_shape_id in [3, 6]:
+            return
+
+        # Works for every piece but long!
+        # Take 3 by 3 area around the center
+        # Also sametime override old values in state
+        row1, row2 = self.last_spawned_center[0] - 1, self.last_spawned_center[0] - 1 + 3
+        col1, col2 = self.last_spawned_center[1] - 1, self.last_spawned_center[1] - 1 + 3
+
+        temp_area = []
+        for row in range(row1, row2):
+            temp_line = []
+            for col in range(col1, col2):
+                # Check for collision
+                if self.state[row][col] != self.last_spawned_object_id and self.state[row][col] != 0:
+                    return
+
+                temp_line.append(self.state[row][col])
+                self.state[row][col] = 0
+
+            temp_area.append(temp_line)
+
+        # Transpose the matrix (swap rows with columns)
+        transposed_matrix = [list(row) for row in zip(*temp_area)]
+        # Reverse each row to get the 90-degree rotation
+        temp_area = [row[::-1] for row in transposed_matrix]
+
+        for row in temp_area:
+            print(row)
+        print("\n")
+
+        # Now based on how many rectangles at bottom to align the shape
+        # 1. 3 wide object --> alignment done
+        # 2. 2 wide bottom object --> check which col has more squares, that becomes the center ONLY IF not 3 total width
+        # 3. 1 wide bottom object --> just align to middle
+
+        # Find bottom_wide_value
+        bottom_wide_value = None
+        width_array = [0, 0, 0]
+        for row in range(3):
+            id_count = 0
+            for col in range(3):
+                if temp_area[row][col] == self.last_spawned_object_id:
+                    width_array[col] = 1
+                    id_count += 1
+
+            if id_count == 3:
+                bottom_wide_value = 3
+                break
+
+            if row == 2:
+                bottom_wide_value = id_count
+
+        total_width = width_array.count(self.last_spawned_object_id)
+        print(f"total width {total_width}")
+
+        # Find the highest col for bottom 2
+        highest_col = None
+        if bottom_wide_value == 2:
+            col_highest_count = 0
+            for col in range(3):
+                temp_counter = 0
+                for row in range(2, -1, -1):
+                    if temp_area[row][col] != self.last_spawned_object_id:
+                        continue
+
+                    temp_counter += 1
+
+                if temp_counter > col_highest_count:
+                    highest_col = col
+                    col_highest_count = temp_counter
+
+        """
+        example:
+        [0, 1, 0]       [1, 0, 0]     
+        [0, 1, 1] -->   [1, 1, 0] 
+        [0, 0, 1]       [0, 1, 0] 
+        """
+        # Align bottom if it is 2 wide and total wide not 3 or 1 wide and in need for offset
+        if (bottom_wide_value == 2 and total_width != 3) or (bottom_wide_value == 1 and temp_area[2][1] == 0):
+            new_matrix = [[0 for _ in range(3)] for _ in range(3)]
+            for row in range(3):
+                for col in range(3):
+                    # Move everything to left
+                    if (temp_area[2][0] == 0 and bottom_wide_value == 1) or (
+                            bottom_wide_value == 2 and highest_col == 2):
+                        if col < 2:
+                            new_matrix[row][col] = temp_area[row][col + 1]
+                        else:
+                            new_matrix[row][col] = 0
+                    # Move everything to right
+                    elif (temp_area[2][2] == 0 and bottom_wide_value == 1) or (
+                            bottom_wide_value == 2 and highest_col == 0):
+                        if col > 0:
+                            new_matrix[row][col] = temp_area[row][col - 1]
+                        else:
+                            new_matrix[row][col] = 0
+
+            temp_area = new_matrix
+
+        for row in temp_area:
+            print(row)
+
+        # Apply changes
+        self.last_spawned_object_row = self.last_spawned_center[0] - 1 + 2
+        self.last_spawned_object_col = self.last_spawned_center[1] - 1 + 2
+        for row in range(3):
+            for col in range(3):
+                new_row = self.last_spawned_center[0] - 1 + row
+                new_col = self.last_spawned_center[1] - 1 + col
+                self.state[new_row][new_col] = temp_area[row][col]
+
+                # Update row, col tracking
+                if temp_area[row][col] == 1:
+                    if new_col < self.last_spawned_object_col:
+                        self.last_spawned_object_row = new_row
+                        self.last_spawned_object_col = new_col
+                    elif new_col == self.last_spawned_object_col and new_row > self.last_spawned_object_row:
+                        self.last_spawned_object_row = new_row
+                        self.last_spawned_object_col = new_col
 
     def tetris(self) -> None:
         tetris_count = 0
@@ -708,15 +836,27 @@ class Engine:
             self.spawn_shape()
             self.spawn_new = False
 
+        print(self.last_spawned_object_row, self.last_spawned_object_col)
+
 
 def main():
     game = Engine()
-
+    frames = 0
     while not game.game_end:
         game.update()
         game.print_state()
         time.sleep(0.5)
-        # break
+
+        if frames == 1:
+            game.manual_rotate()
+
+        if frames == 2:
+            game.manual_rotate()
+
+        if frames == 3:
+            break
+
+        frames += 1
 
 
 if __name__ == '__main__':
