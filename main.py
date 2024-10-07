@@ -68,28 +68,29 @@ class Render:
         self.run = True
 
     def handle_events(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.run = False
+                self.engine.game_end = True
+
+    def handle_keys(self) -> None:
         key = pygame.key.get_pressed()
 
         if key[pygame.K_LEFT] and self.move_timer <= 0:
             if self.enable_sound:
                 pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
-            self.engine.manual_move("left")
+            self.engine.key_buffer.append("left")
             self.move_timer = 0.15
         elif key[pygame.K_RIGHT] and self.move_timer <= 0:
             if self.enable_sound:
                 pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
-            self.engine.manual_move("right")
+            self.engine.key_buffer.append("right")
             self.move_timer = 0.15
         elif key[pygame.K_UP] and self.move_timer <= 0:
             if self.enable_sound:
                 pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
-            self.engine.manual_rotate()
-            self.move_timer = 1
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.run = False
-                self.engine.game_end = True
+            self.engine.key_buffer.append("rotate")
+            self.move_timer = 0.15
 
     def handle_fps(self):
         # Calculate and display FPS
@@ -126,19 +127,20 @@ class Render:
             self.main_track.play()
 
         while not self.engine.game_end:
+            # Update engine
+            self.engine.update()
+
+            # Render
             self.screen.fill((0, 0, 0))
             self.draw_game_area()
             self.draw_shapes()
 
             self.handle_events()
+            self.handle_keys()
             self.handle_fps()
 
             # Update the screen
             pygame.display.update()
-            # Update the engine
-            if self.timer <= 0:
-                self.engine.update()
-                self.timer = 0.3
 
             # Limit to 60 frames per second
             dt = self.clock.tick(60) / 1000
@@ -171,13 +173,17 @@ class Engine:
     Score is calculated based on this formula points_for_tetris_lines * (level + 1)
     """
 
-    # TODO: rotation collision
     # TODO: rotation
     # TODO: level change
 
     def __init__(self):
         self.state = []
+        self.key_buffer = []
         self.init_state()
+        self.frames = 0
+
+        # Speed calculated from 16.6ms * self.speed --> lower the speed faster the update
+        self.speed = 1
 
         # Shapes are max size 2x4
         self.all_shapes = [
@@ -210,6 +216,7 @@ class Engine:
                 [0, 0, 0, 0]
             ]
         ]
+        self.shape_bucket = self.make_bucket_sort()
 
         # ID counter for objects
         self.id_counter = 0
@@ -245,6 +252,11 @@ class Engine:
 
             self.state.append(new_line)
 
+    def make_bucket_sort(self):
+        # testing
+        # return [(6, self.all_shapes[6])]
+        return [(shape_id, self.all_shapes[shape_id]) for shape_id in range(7)]
+
     def gen_id(self):
         self.id_counter += 1
         return self.id_counter
@@ -279,16 +291,22 @@ class Engine:
                     return
 
     def spawn_shape(self):
-        random_int = random.randint(0, 5)
-        self.last_spawned_shape_id = random_int
-        random_shape = self.all_shapes[random_int]
-        # random_shape = self.all_shapes[2]
+        # If all shapes used, generate bucket again
+        if len(self.shape_bucket) == 0:
+            self.shape_bucket = self.make_bucket_sort()
+
+        # Choose random index based on amount of items in bucket
+        random_int = random.randint(0, len(self.shape_bucket) - 1)
+        random_choice = self.shape_bucket[random_int]
+        self.shape_bucket.pop(random_int)
+        self.last_spawned_shape_id = random_choice[0]
+        random_shape = random_choice[1]
 
         new_id = self.gen_id()
 
         # Choose random col to spawn
         random_col = random.randint(0, 6)
-        self.last_spawned_center = [1, random_col + 1]
+        self.last_spawned_center = [1, random_col + 1] # ROW needs to be 0 for long piece
 
         # Save the position of spawned object for fast access later on (BOTTOM_LEFT_CORNER)
         self.assign_last_spawn_object_vars(random_shape, random_col)
@@ -509,6 +527,9 @@ class Engine:
         return cur_row, cur_col
 
     def move(self, object_id):
+        if self.frames % self.speed != 0:
+            return
+
         # loop through cols and rows[::-1] and move everything down
         # First find shape start
         if object_id == self.last_spawned_object_id:
@@ -639,9 +660,46 @@ class Engine:
         """
         print("trying to rotate")
         if self.last_spawned_object_id is None:
+            print("Cannot find shape")
             return
 
-        if self.last_spawned_shape_id in [3, 6]:
+        if self.last_spawned_shape_id == 3:
+            print("Skipping piece")
+            return
+
+        # Also don't rotate if piece has not fallen yet at all
+        if self.last_spawned_center[0] < 1:
+            print("Cannot rotate immediately after spawn")
+            return
+
+        # Deal with long piece separately
+        if self.last_spawned_shape_id == 6:
+            # Make certain there is no collision
+            c_row, c_col = self.last_spawned_center[0] - 1, self.last_spawned_center[1] - 1
+
+            for row in range(4):
+                for col in range(4):
+                    if self.state[row][col] != self.last_spawned_object_id and self.state[row][col] != 0:
+                        print("long shape collision")
+                        return
+
+            rotate_1 = [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]]
+            rotate_2 = [[0, 0, 1, 0], [0, 0, 1, 0], [0, 0, 1, 0], [0, 0, 1, 0]]
+            for row in range(4):
+                for col in range(4):
+                    # Currently vertical
+                    if self.state[c_row][c_col + 2] != 0:
+                        self.state[c_row + row][c_col + col] = rotate_1[row][col]
+                        if row == 3 and col == 3:
+                            self.last_spawned_object_row = c_row + 1
+                            self.last_spawned_object_col = c_col
+
+                    else:
+                        self.state[c_row + row][c_col + col] = rotate_2[row][col]
+                        if row == 3 and col == 3:
+                            self.last_spawned_object_row = c_row + 3
+                            self.last_spawned_object_col = c_col + 2
+
             return
 
         # Works for every piece but long!
@@ -671,6 +729,13 @@ class Engine:
         for row in temp_area:
             print(row)
         print("\n")
+
+        # Some shapes like purple zigzag after 2nd rotation has to move down
+        # If there is empty row as 3rd move everything down
+        if temp_area[2].count(0) == 3:
+            temp_area[2] = temp_area[1]
+            temp_area[1] = temp_area[0]
+            temp_area[0] = [0, 0, 0]
 
         # Now based on how many rectangles at bottom to align the shape
         # 1. 3 wide object --> alignment done
@@ -798,6 +863,17 @@ class Engine:
         3. Spawn new primary object if not exists
         :return:
         """
+        # Run all the key_events
+        for event in self.key_buffer:
+            if event == "left":
+                self.manual_move("left")
+            elif event == "right":
+                self.manual_move("right")
+            elif event == "rotate":
+                self.manual_rotate()
+
+        self.key_buffer = []
+
         # Use prev_tetris count to know how many updates to skip for falling tetris parts
         if self.prev_tetris_row > 0:
             for object_id in range(1, self.id_counter + 1):
@@ -836,7 +912,9 @@ class Engine:
             self.spawn_shape()
             self.spawn_new = False
 
-        print(self.last_spawned_object_row, self.last_spawned_object_col)
+        self.frames += 1
+
+        # print(self.last_spawned_object_row, self.last_spawned_object_col)
 
 
 def main():
@@ -847,21 +925,17 @@ def main():
         game.print_state()
         time.sleep(0.5)
 
-        if frames == 1:
-            game.manual_rotate()
+        game.manual_rotate()
 
-        if frames == 2:
-            game.manual_rotate()
-
-        if frames == 3:
+        if frames == 5:
             break
 
         frames += 1
 
 
 if __name__ == '__main__':
-    # main()
+    main()
 
-    engine = Engine()
-    renderer = Render(engine)
-    renderer.execute()
+    # engine = Engine()
+    # renderer = Render(engine)
+    # renderer.execute()
