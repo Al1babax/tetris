@@ -4,6 +4,7 @@ import random
 import time
 from color import Colors
 import os
+import copy
 
 """
 Game area: Leave two rows to top for generation of cubes, 20x10 area,
@@ -114,7 +115,7 @@ class Render:
             for cell in row:
                 if cell != 0:
                     rectangle = pygame.Rect((cur_x, cur_y, 30, 30))
-                    color = self.engine.color_dict.get(cell)
+                    color = self.engine.rectangle_dict.get(cell)[1]
                     pygame.draw.rect(self.screen, color, rectangle, border_radius=6)
 
                 cur_x += 30
@@ -177,13 +178,13 @@ class Engine:
     # TODO: level change
 
     def __init__(self):
-        self.state = []
+        self.state: List[List[int]] = []
         self.key_buffer = []
         self.init_state()
         self.frames = 0
 
         # Speed calculated from 16.6ms * self.speed --> lower the speed faster the update
-        self.speed = 1
+        self.speed = 20
 
         # Shapes are max size 2x4
         self.all_shapes = [
@@ -230,15 +231,16 @@ class Engine:
         self.last_spawned_center: Optional[List[int, int]] = None  # Used for tracking the center for rotation
         self.prev_color: Optional[str] = None
 
+        self.tetris_bottom_row = None
         self.prev_tetris_row = 0
         self.total_tetris_rows = 0
 
         self.level = 0
         self.score = 0
 
-        # Save color for each object id
-        self.color_dict = {
-            0: "blue",
+        # Save color for each object id: [recs_left, color]
+        self.rectangle_dict = {
+            0: [0, "blue"],
         }
 
         self.colorer = Colors()
@@ -275,20 +277,19 @@ class Engine:
         # os.system("cls")
         for i, row in enumerate(self.state):
             for j, cell in enumerate(row):
-                color = "white" if (self.last_spawned_center[0] == i and self.last_spawned_center[
-                    1] == j) else self.color_dict.get(cell)
+                color = "white" if (self.last_spawned_object_row == i and self.last_spawned_object_col == j) else \
+                    self.rectangle_dict.get(cell)[1]
                 print(self.colorer.color_text(f" {cell} ", color), end="")
             print("\n", end="")
 
         print("\n")
 
     def assign_last_spawn_object_vars(self, random_shape, rand_col) -> None:
-        for col in range(4):
-            for row in range(1, -1, -1):
+        for col in range(3, -1, -1):
+            for row in range(2):
                 if random_shape[row][col] != 0:
                     self.last_spawned_object_row = row
                     self.last_spawned_object_col = col + rand_col
-                    return
 
     def spawn_shape(self):
         # If all shapes used, generate bucket again
@@ -306,7 +307,7 @@ class Engine:
 
         # Choose random col to spawn
         random_col = random.randint(0, 6)
-        self.last_spawned_center = [1, random_col + 1] # ROW needs to be 0 for long piece
+        self.last_spawned_center = [0, random_col + 1]
 
         # Save the position of spawned object for fast access later on (BOTTOM_LEFT_CORNER)
         self.assign_last_spawn_object_vars(random_shape, random_col)
@@ -317,7 +318,7 @@ class Engine:
                 # Spawn rectangle to the shape
                 self.state[row][random_col + col] = 0 if random_shape[row][col] == 0 else new_id
 
-        self.color_dict[new_id] = self.random_color()
+        self.rectangle_dict[new_id] = [4, self.random_color()]
 
     def find_rectangle(self, cur_x, cur_y, object_id):
         """
@@ -527,9 +528,6 @@ class Engine:
         return cur_row, cur_col
 
     def move(self, object_id):
-        if self.frames % self.speed != 0:
-            return
-
         # loop through cols and rows[::-1] and move everything down
         # First find shape start
         if object_id == self.last_spawned_object_id:
@@ -615,7 +613,6 @@ class Engine:
 
         # Make certain object is not horizontally hitting something
         if self.collision_detection_horizontal(start_row, start_col, direction):
-            print("object hitting wall")
             return
 
         # Move every id column per column to right or left
@@ -658,37 +655,39 @@ class Engine:
         Rotates the falling shape clockwise
         :return:
         """
-        print("trying to rotate")
         if self.last_spawned_object_id is None:
-            print("Cannot find shape")
             return
 
         if self.last_spawned_shape_id == 3:
-            print("Skipping piece")
             return
 
         # Also don't rotate if piece has not fallen yet at all
         if self.last_spawned_center[0] < 1:
-            print("Cannot rotate immediately after spawn")
             return
 
         # Deal with long piece separately
         if self.last_spawned_shape_id == 6:
-            # Make certain there is no collision
+            # Make certain there is no collision and rotate area does not go out of bounds
             c_row, c_col = self.last_spawned_center[0] - 1, self.last_spawned_center[1] - 1
+            if not (0 <= c_row + 3 <= 19 and 0 <= c_col + 3 <= 9 and 0 <= c_row <= 19 and 0 <= c_col <= 9):
+                return
 
             for row in range(4):
                 for col in range(4):
-                    if self.state[row][col] != self.last_spawned_object_id and self.state[row][col] != 0:
-                        print("long shape collision")
+                    if self.state[c_row + row][c_col + col] != self.last_spawned_object_id and self.state[c_row + row][
+                        c_col + col] != 0:
                         return
 
-            rotate_1 = [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]]
-            rotate_2 = [[0, 0, 1, 0], [0, 0, 1, 0], [0, 0, 1, 0], [0, 0, 1, 0]]
+            i = self.last_spawned_object_id
+            rotate_1 = [[0, 0, 0, 0], [i, i, i, i], [0, 0, 0, 0], [0, 0, 0, 0]]
+            rotate_2 = [[0, 0, i, 0], [0, 0, i, 0], [0, 0, i, 0], [0, 0, i, 0]]
+
+            # Get whether the shape is vertical or horizontal
+            vertical = True if self.state[c_row][c_col + 2] != 0 else False
             for row in range(4):
                 for col in range(4):
                     # Currently vertical
-                    if self.state[c_row][c_col + 2] != 0:
+                    if vertical:
                         self.state[c_row + row][c_col + col] = rotate_1[row][col]
                         if row == 3 and col == 3:
                             self.last_spawned_object_row = c_row + 1
@@ -726,10 +725,6 @@ class Engine:
         # Reverse each row to get the 90-degree rotation
         temp_area = [row[::-1] for row in transposed_matrix]
 
-        for row in temp_area:
-            print(row)
-        print("\n")
-
         # Some shapes like purple zigzag after 2nd rotation has to move down
         # If there is empty row as 3rd move everything down
         if temp_area[2].count(0) == 3:
@@ -760,7 +755,6 @@ class Engine:
                 bottom_wide_value = id_count
 
         total_width = width_array.count(self.last_spawned_object_id)
-        print(f"total width {total_width}")
 
         # Find the highest col for bottom 2
         highest_col = None
@@ -785,7 +779,8 @@ class Engine:
         [0, 0, 1]       [0, 1, 0] 
         """
         # Align bottom if it is 2 wide and total wide not 3 or 1 wide and in need for offset
-        if (bottom_wide_value == 2 and total_width != 3) or (bottom_wide_value == 1 and temp_area[2][1] == 0):
+        if (bottom_wide_value == 2 and total_width != 3 and highest_col != 1) or (
+                bottom_wide_value == 1 and temp_area[2][1] == 0):
             new_matrix = [[0 for _ in range(3)] for _ in range(3)]
             for row in range(3):
                 for col in range(3):
@@ -806,11 +801,9 @@ class Engine:
 
             temp_area = new_matrix
 
-        for row in temp_area:
-            print(row)
-
         # Apply changes
-        self.last_spawned_object_row = self.last_spawned_center[0] - 1 + 2
+        # Setup top right corner as starting point for object tracking
+        self.last_spawned_object_row = self.last_spawned_center[0] - 1
         self.last_spawned_object_col = self.last_spawned_center[1] - 1 + 2
         for row in range(3):
             for col in range(3):
@@ -819,7 +812,7 @@ class Engine:
                 self.state[new_row][new_col] = temp_area[row][col]
 
                 # Update row, col tracking
-                if temp_area[row][col] == 1:
+                if temp_area[row][col] == self.last_spawned_object_id:
                     if new_col < self.last_spawned_object_col:
                         self.last_spawned_object_row = new_row
                         self.last_spawned_object_col = new_col
@@ -830,14 +823,21 @@ class Engine:
     def tetris(self) -> None:
         tetris_count = 0
 
-        # scan whole thing
+        # scan whole thing, count destroyed recs for each object
         for row in range(20):
             if 0 in self.state[row]:
                 continue
 
             self.prev_tetris_row += 1
             tetris_count += 1
+            self.tetris_bottom_row = row
             for col in range(10):
+                object_state = self.rectangle_dict[self.state[row][col]]
+                if object_state[0] == 1:
+                    del self.rectangle_dict[self.state[row][col]]
+                else:
+                    object_state[0] -= 1
+
                 self.state[row][col] = 0
 
         if tetris_count != 0:
@@ -854,6 +854,12 @@ class Engine:
                     self.score = 1200 * (self.level + 1)
 
             # Update level
+
+    def tetris_move(self):
+        # Move every rectangle down to the bottom tetris line
+        # When moving lines this way have to copy otherwise python will mess up with references
+        for row in range(self.tetris_bottom_row - 1, -1, -1):
+            self.state[row + 1] = self.state[row].copy()
 
     def update(self):
         """
@@ -876,22 +882,17 @@ class Engine:
 
         # Use prev_tetris count to know how many updates to skip for falling tetris parts
         if self.prev_tetris_row > 0:
-            for object_id in range(1, self.id_counter + 1):
-                collision_bool = self.collision_detection_vertical(object_id)
-
-                # If no collision move down
-                if not collision_bool:
-                    self.move(object_id)
-
+            self.tetris_move()
             self.prev_tetris_row -= 1
             # Check for cascading tetris
             if self.prev_tetris_row == 0:
+                self.tetris_bottom_row = None
                 self.tetris()
 
             return
 
         # Move primary down
-        if self.last_spawned_object_id:
+        if self.last_spawned_object_id and self.frames % self.speed == 0:
             collision_bool = self.collision_detection_vertical(self.last_spawned_object_id)
 
             # If no collision move down
@@ -904,7 +905,7 @@ class Engine:
                 self.spawn_new = True
 
         # Spawn a new shape
-        if self.spawn_new:
+        if self.spawn_new and self.prev_tetris_row == 0:
             if self.lazy_game_end():
                 self.game_end = True
                 return
@@ -914,28 +915,27 @@ class Engine:
 
         self.frames += 1
 
-        # print(self.last_spawned_object_row, self.last_spawned_object_col)
-
 
 def main():
     game = Engine()
     frames = 0
+    game.update()
     while not game.game_end:
-        game.update()
         game.print_state()
-        time.sleep(0.5)
 
-        game.manual_rotate()
+        # game.key_buffer.append("rotate")
+        game.update()
+        time.sleep(0.4)
 
-        if frames == 5:
+        if frames == 100:
             break
 
         frames += 1
 
 
 if __name__ == '__main__':
-    main()
+    # main()
 
-    # engine = Engine()
-    # renderer = Render(engine)
-    # renderer.execute()
+    engine = Engine()
+    renderer = Render(engine)
+    renderer.execute()
