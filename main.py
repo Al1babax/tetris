@@ -3,8 +3,6 @@ from typing import List, Tuple, Optional
 import random
 import time
 from color import Colors
-import os
-import copy
 
 """
 Game area: Leave two rows to top for generation of cubes, 20x10 area,
@@ -92,12 +90,28 @@ class Render:
                 pygame.mixer.Sound("soundtracks/SFX 4.mp3").play()
             self.engine.key_buffer.append("rotate")
             self.move_timer = 0.15
+        elif key[pygame.K_DOWN] and self.move_timer <= 0:
+            self.engine.key_buffer.append("down")
+            self.move_timer = 0.15
 
     def handle_fps(self):
         # Calculate and display FPS
         fps = self.clock.get_fps()
         fps_text = self.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))  # White color
         self.screen.blit(fps_text, (10, 10))  # Draw the FPS text in the top left corner
+
+    def text_fields(self):
+        # Display level and score
+        level = self.engine.level
+        score = self.engine.score
+        level_text = self.font.render(f"Level: {level}", True, (255, 255, 255))
+        score_text = self.font.render(f"Score: {score}", True, (255, 255, 255))
+
+        level_pos = (self.SCREEN_WIDTH - 150, 10)
+        score_pos = (self.SCREEN_WIDTH - 150, 60)
+
+        self.screen.blit(level_text, level_pos)
+        self.screen.blit(score_text, score_pos)
 
     def draw_game_area(self):
         # Vertical lines
@@ -139,6 +153,7 @@ class Render:
             self.handle_events()
             self.handle_keys()
             self.handle_fps()
+            self.text_fields()
 
             # Update the screen
             pygame.display.update()
@@ -184,7 +199,7 @@ class Engine:
         self.frames = 0
 
         # Speed calculated from 16.6ms * self.speed --> lower the speed faster the update
-        self.speed = 20
+        self.speed = 30
 
         # Shapes are max size 2x4
         self.all_shapes = [
@@ -845,15 +860,21 @@ class Engine:
             self.total_tetris_rows += tetris_count
             match tetris_count:
                 case 1:
-                    self.score = 40 * (self.level + 1)
+                    self.score += 40 * (self.level + 1)
                 case 2:
-                    self.score = 80 * (self.level + 1)
+                    self.score += 80 * (self.level + 1)
                 case 3:
-                    self.score = 300 * (self.level + 1)
+                    self.score += 300 * (self.level + 1)
                 case 4:
-                    self.score = 1200 * (self.level + 1)
+                    self.score += 1200 * (self.level + 1)
 
             # Update level
+            # Speed up the game with formula 30 - (level * 2) Meaning after 150 tetris aka lvl 15 reach max speed
+            self.level = self.total_tetris_rows // 10
+            self.speed = 30 - (self.level * 2)
+
+            if self.speed < 1:
+                self.speed = 1
 
     def tetris_move(self):
         # Move every rectangle down to the bottom tetris line
@@ -877,6 +898,17 @@ class Engine:
                 self.manual_move("right")
             elif event == "rotate":
                 self.manual_rotate()
+            elif event == "down":
+                collision_bool = self.collision_detection_vertical(self.last_spawned_object_id)
+
+                # If no collision move down
+                if not collision_bool:
+                    self.move(self.last_spawned_object_id)
+                # If collided object was last spawned, spawn new one
+                else:
+                    # Check for tetris
+                    self.tetris()
+                    self.spawn_new = True
 
         self.key_buffer = []
 
@@ -937,5 +969,5 @@ if __name__ == '__main__':
     # main()
 
     engine = Engine()
-    renderer = Render(engine)
+    renderer = Render(engine, enable_sound=True)
     renderer.execute()
