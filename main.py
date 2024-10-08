@@ -10,6 +10,9 @@ Game area: Leave two rows to top for generation of cubes, 20x10 area,
 """
 
 
+# TODO: bug in engine when placing moved/rotated shapes and moving the 0 in shape down it will sometimes override other shapes
+# TODO: also it happens when moving sideways and collision does check horizontal but it overrides things top and below
+
 class Sound:
     def __init__(self, volume=0.4):
         pygame.mixer.init()
@@ -188,9 +191,6 @@ class Engine:
     Every 10 tetris cleared a new level will begin
     Score is calculated based on this formula points_for_tetris_lines * (level + 1)
     """
-
-    # TODO: rotation
-    # TODO: level change
 
     def __init__(self):
         self.state: List[List[int]] = []
@@ -603,6 +603,7 @@ class Engine:
         if direction == "right":
             most_right = [start_row, start_col]
 
+            # Use dfs to find most right column
             def dfs(row, col, object_id, visited_nodes: List):
                 # Check out of bounds
                 if not (0 <= row <= 19) or not (0 <= col <= 9):
@@ -913,7 +914,7 @@ class Engine:
         self.key_buffer = []
 
         # Use prev_tetris count to know how many updates to skip for falling tetris parts
-        if self.prev_tetris_row > 0:
+        if self.prev_tetris_row > 0 and self.frames & self.speed == 0:
             self.tetris_move()
             self.prev_tetris_row -= 1
             # Check for cascading tetris
@@ -921,10 +922,11 @@ class Engine:
                 self.tetris_bottom_row = None
                 self.tetris()
 
+            self.frames += 1
             return
 
         # Move primary down
-        if self.last_spawned_object_id and self.frames % self.speed == 0:
+        if self.spawn_new is False and self.frames % self.speed == 0:
             collision_bool = self.collision_detection_vertical(self.last_spawned_object_id)
 
             # If no collision move down
@@ -937,7 +939,7 @@ class Engine:
                 self.spawn_new = True
 
         # Spawn a new shape
-        if self.spawn_new and self.prev_tetris_row == 0:
+        if self.spawn_new is True and self.prev_tetris_row == 0:
             if self.lazy_game_end():
                 self.game_end = True
                 return
