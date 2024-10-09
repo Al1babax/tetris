@@ -12,9 +12,10 @@ Game area: Leave two rows to top for generation of cubes, 20x10 area,
 
 # TODO: bug in engine when placing moved/rotated shapes and moving the 0 in shape down it will sometimes override other shapes
 # TODO: also it happens when moving sideways and collision does check horizontal but it overrides things top and below
+# TODO: Rotate and manual move left or right overrides other blocks
 
 class Sound:
-    def __init__(self, volume=0.4):
+    def __init__(self, volume=0.2):
         pygame.mixer.init()
         pygame.mixer.music.set_volume(volume)
         self.soundtrack_dict = {
@@ -194,8 +195,9 @@ class Engine:
 
     def __init__(self):
         self.state: List[List[int]] = []
-        self.key_buffer = []
+
         self.init_state()
+        self.key_buffer = []
         self.frames = 0
 
         # Speed calculated from 16.6ms * self.speed --> lower the speed faster the update
@@ -246,6 +248,10 @@ class Engine:
         self.last_spawned_center: Optional[List[int, int]] = None  # Used for tracking the center for rotation
         self.prev_color: Optional[str] = None
 
+        # Next shape
+        self.next_shape_id = None
+
+        # Tetris memory
         self.tetris_bottom_row = None
         self.prev_tetris_row = 0
         self.total_tetris_rows = 0
@@ -527,7 +533,7 @@ class Engine:
 
         return best_position[0], best_position[1]
 
-    def bottom_column_position(self, cur_row, cur_col, object_id):
+    def bottom_column_position(self, cur_row, cur_col, object_id) -> Tuple[int, int]:
         # Get to the bottom in this col
         for _ in range(4):
             # First there is object below
@@ -626,6 +632,8 @@ class Engine:
 
             dfs(start_row, start_col, self.last_spawned_object_id, [])
             start_row, start_col = most_right[0], most_right[1]
+            # Get the most bottom value also
+            self.bottom_column_position(start_row, start_col, self.last_spawned_object_id)
 
         # Make certain object is not horizontally hitting something
         if self.collision_detection_horizontal(start_row, start_col, direction):
@@ -643,7 +651,7 @@ class Engine:
                 if cur_row < 0 or cur_row > 19:
                     cur_row -= 1
                     continue
-                # Do not move 0
+                # Only move right id
                 if self.state[cur_row][cur_col] != self.last_spawned_object_id:
                     cur_row -= 1
                     continue
@@ -708,13 +716,17 @@ class Engine:
                         if row == 3 and col == 3:
                             self.last_spawned_object_row = c_row + 1
                             self.last_spawned_object_col = c_col
-
                     else:
                         self.state[c_row + row][c_col + col] = rotate_2[row][col]
                         if row == 3 and col == 3:
                             self.last_spawned_object_row = c_row + 3
                             self.last_spawned_object_col = c_col + 2
 
+            return
+
+        # Check for border collision
+        if not (0 <= self.last_spawned_center[0] - 1 <= 19) or not (0 <= self.last_spawned_center[1] - 1 <= 9):
+            print("border collision")
             return
 
         # Works for every piece but long!
@@ -821,10 +833,35 @@ class Engine:
         # Setup top right corner as starting point for object tracking
         self.last_spawned_object_row = self.last_spawned_center[0] - 1
         self.last_spawned_object_col = self.last_spawned_center[1] - 1 + 2
+        # enum_row, enum_col = 0, 0
+        # for row in range(row1, row2):
+        #     for col in range(col1, col2):
+        #         self.state[row][col] = temp_area[enum_row][enum_col]
+        #         # Update row, col tracking
+        #         if temp_area[enum_row][enum_col] == self.last_spawned_object_id:
+        #             if col < self.last_spawned_object_col:
+        #                 self.last_spawned_object_row = row
+        #                 self.last_spawned_object_col = col
+        #             elif col == self.last_spawned_object_col and row > self.last_spawned_object_row:
+        #                 self.last_spawned_object_row = row
+        #                 self.last_spawned_object_col = col
+        #
+        #         enum_col += 1
+        #     enum_col = 0
+        #     enum_row += 1
+
+        for row in temp_area:
+            print(row)
+        print("\n")
+
         for row in range(3):
             for col in range(3):
                 new_row = self.last_spawned_center[0] - 1 + row
                 new_col = self.last_spawned_center[1] - 1 + col
+                if self.state[new_row][new_col] != 0 and self.state[new_row][new_col] != self.last_spawned_object_id:
+                    print("New collision catch some shit")
+                    return
+
                 self.state[new_row][new_col] = temp_area[row][col]
 
                 # Update row, col tracking
@@ -957,7 +994,7 @@ def main():
     while not game.game_end:
         game.print_state()
 
-        # game.key_buffer.append("rotate")
+        game.key_buffer.append("right")
         game.update()
         time.sleep(0.4)
 
@@ -971,5 +1008,5 @@ if __name__ == '__main__':
     # main()
 
     engine = Engine()
-    renderer = Render(engine, enable_sound=True)
+    renderer = Render(engine, enable_sound=False)
     renderer.execute()
