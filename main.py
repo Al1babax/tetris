@@ -450,10 +450,12 @@ class Engine:
         # Check each row separately
         cur_row, cur_col = start_row, start_col
         cur_row -= 3
-        for row in range(4):
+        for row in range(7):
             if cur_row < 0:
                 cur_row += 1
                 continue
+            elif cur_row > 19:
+                break
 
             id_found = False
 
@@ -476,6 +478,7 @@ class Engine:
                 cur_col = start_col
                 continue
 
+            print(f"checking {cur_row, cur_col + 1}")
             # Check if collision happens
             if side == "right":
                 if cur_col + 1 == 10 or self.state[cur_row][cur_col + 1] != 0:
@@ -731,7 +734,13 @@ class Engine:
         # 3x3 collision check
         for row in range(3):
             for col in range(3):
-                cell = self.state[self.last_spawned_center[0] - 1 + row][self.last_spawned_center[1] - 1 + col]
+                x = self.last_spawned_center[0] - 1 + row
+                y = self.last_spawned_center[1] - 1 + col
+                # Check for t-shape collision against the wall
+                if x < 0 or x > 19 or y < 0 or y > 9:
+                    return
+
+                cell = self.state[x][y]
                 if cell != self.last_spawned_object_id and cell != 0:
                     return
 
@@ -912,6 +921,10 @@ class Engine:
         """
         # Run all the key_events
         for event in self.key_buffer:
+            # Make certain the primary object exists
+            if self.spawn_new is True:
+                break
+
             if event == "left":
                 self.manual_move("left")
             elif event == "right":
