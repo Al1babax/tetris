@@ -12,7 +12,6 @@ Game area: Leave two rows to top for generation of cubes, 20x10 area,
 
 # TODO: bug in engine when placing moved/rotated shapes and moving the 0 in shape down it will sometimes override other shapes
 # TODO: also it happens when moving sideways and collision does check horizontal but it overrides things top and below
-# TODO: Rotate and manual move left or right overrides other blocks
 
 class Sound:
     def __init__(self, volume=0.2):
@@ -729,6 +728,13 @@ class Engine:
             print("border collision")
             return
 
+        # 3x3 collision check
+        for row in range(3):
+            for col in range(3):
+                cell = self.state[self.last_spawned_center[0] - 1 + row][self.last_spawned_center[1] - 1 + col]
+                if cell != self.last_spawned_object_id and cell != 0:
+                    return
+
         # Works for every piece but long!
         # Take 3 by 3 area around the center
         # Also sametime override old values in state
@@ -739,10 +745,6 @@ class Engine:
         for row in range(row1, row2):
             temp_line = []
             for col in range(col1, col2):
-                # Check for collision
-                if self.state[row][col] != self.last_spawned_object_id and self.state[row][col] != 0:
-                    return
-
                 temp_line.append(self.state[row][col])
                 self.state[row][col] = 0
 
@@ -833,26 +835,6 @@ class Engine:
         # Setup top right corner as starting point for object tracking
         self.last_spawned_object_row = self.last_spawned_center[0] - 1
         self.last_spawned_object_col = self.last_spawned_center[1] - 1 + 2
-        # enum_row, enum_col = 0, 0
-        # for row in range(row1, row2):
-        #     for col in range(col1, col2):
-        #         self.state[row][col] = temp_area[enum_row][enum_col]
-        #         # Update row, col tracking
-        #         if temp_area[enum_row][enum_col] == self.last_spawned_object_id:
-        #             if col < self.last_spawned_object_col:
-        #                 self.last_spawned_object_row = row
-        #                 self.last_spawned_object_col = col
-        #             elif col == self.last_spawned_object_col and row > self.last_spawned_object_row:
-        #                 self.last_spawned_object_row = row
-        #                 self.last_spawned_object_col = col
-        #
-        #         enum_col += 1
-        #     enum_col = 0
-        #     enum_row += 1
-
-        for row in temp_area:
-            print(row)
-        print("\n")
 
         for row in range(3):
             for col in range(3):
