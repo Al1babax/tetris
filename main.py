@@ -60,7 +60,7 @@ class Render:
         # Create a clock to manage the frame rate
         self.clock = pygame.time.Clock()
         # Create a font object for rendering the FPS
-        self.font = pygame.font.SysFont(None, 36)
+        self.font = pygame.font.SysFont(None, 50)
 
         # Game engine
         self.engine: Engine = engine
@@ -103,7 +103,7 @@ class Render:
         fps_text = self.font.render(f"FPS: {fps:.2f}", True, (255, 255, 255))  # White color
         self.screen.blit(fps_text, (10, 10))  # Draw the FPS text in the top left corner
 
-    def text_fields(self):
+    def draw_scores(self):
         # Display level and score
         level = self.engine.level
         score = self.engine.score
@@ -116,13 +116,64 @@ class Render:
         self.screen.blit(level_text, level_pos)
         self.screen.blit(score_text, score_pos)
 
-    def draw_game_area(self):
+    def draw_main_lines(self):
         # Vertical lines
         pygame.draw.line(self.screen, (255, 255, 255), (250, 0), (250, 800), 5)
         pygame.draw.line(self.screen, (255, 255, 255), (550, 0), (550, 800), 5)
         # Horizontal lines
         pygame.draw.line(self.screen, (255, 255, 255), (250, 100), (550, 100), 5)
         pygame.draw.line(self.screen, (255, 255, 255), (250, 700), (550, 700), 5)
+
+    def rectangle_with_border(self, x, y, width, height, bg_color, border_color, border_thickness, border_radius):
+        # Border thickness between 1 and 10
+        background_rect = pygame.Rect((x, y, width, height))
+        new_x = x + border_thickness / 2
+        new_y = y + border_thickness / 2
+        new_width = width - border_thickness
+        new_height = height - border_thickness
+        foreground_rect = pygame.Rect((new_x, new_y, new_width, new_height))
+        pygame.draw.rect(self.screen, border_color, background_rect, border_radius=border_radius)
+        pygame.draw.rect(self.screen, bg_color, foreground_rect)
+
+    def draw_next_shape(self):
+        # Draw box
+        x, y, w, h = 580, 320, 150, 150
+        bg_color = "black"
+        border_color = "cyan"
+        self.rectangle_with_border(x, y, w, h, bg_color, border_color, 20, 5)
+
+        # Write text and show next object
+        text = self.font.render("NEXT", True, (255, 255, 255))
+        self.screen.blit(text, (x + 30, y + 10))
+
+        # Align the shape into the box
+        if self.engine.next_shape[0] == 6:
+            cur_x, cur_y = x + 15, y + 60
+        elif self.engine.next_shape[0] == 3:
+            cur_x, cur_y = x + 45, y + 60
+        else:
+            cur_x, cur_y = x + 30, y + 60
+
+        for row in self.engine.next_shape[1]:
+            for cell in row:
+                if cell != 0:
+                    rectangle = pygame.Rect((cur_x, cur_y, 30, 30))
+                    color = self.engine.rectangle_dict.get(self.engine.next_object_id)[1]
+                    pygame.draw.rect(self.screen, color, rectangle, border_radius=6, width=5)
+
+                cur_x += 30
+
+            cur_x -= 4 * 30
+            cur_y += 30
+
+    def draw_stats(self):
+        pass
+
+    def draw_game_area(self):
+        self.draw_main_lines()
+        self.draw_next_shape()
+        self.draw_scores()
+        self.draw_stats()
 
     def draw_shapes(self):
         cur_x = 250.0
@@ -133,7 +184,7 @@ class Render:
                 if cell != 0:
                     rectangle = pygame.Rect((cur_x, cur_y, 30, 30))
                     color = self.engine.rectangle_dict.get(cell)[1]
-                    pygame.draw.rect(self.screen, color, rectangle, border_radius=6)
+                    pygame.draw.rect(self.screen, color, rectangle, border_radius=6, width=5)
 
                 cur_x += 30
 
@@ -156,7 +207,6 @@ class Render:
             self.handle_events()
             self.handle_keys()
             self.handle_fps()
-            self.text_fields()
 
             # Update the screen
             pygame.display.update()
@@ -248,7 +298,8 @@ class Engine:
         self.prev_color: Optional[str] = None
 
         # Next shape
-        self.next_shape_id = None
+        self.next_shape = None
+        self.next_object_id = None
 
         # Tetris memory
         self.tetris_bottom_row = None
@@ -275,8 +326,7 @@ class Engine:
             self.state.append(new_line)
 
     def make_bucket_sort(self):
-        # testing
-        # return [(6, self.all_shapes[6])]
+        # Fill bucket with all 7 shapes
         return [(shape_id, self.all_shapes[shape_id]) for shape_id in range(7)]
 
     def gen_id(self):
@@ -311,19 +361,40 @@ class Engine:
                     self.last_spawned_object_row = row
                     self.last_spawned_object_col = col + rand_col
 
-    def spawn_shape(self):
+    def get_next_shape(self):
         # If all shapes used, generate bucket again
         if len(self.shape_bucket) == 0:
             self.shape_bucket = self.make_bucket_sort()
 
         # Choose random index based on amount of items in bucket
         random_int = random.randint(0, len(self.shape_bucket) - 1)
-        random_choice = self.shape_bucket[random_int]
+        random_shape = self.shape_bucket[random_int]
         self.shape_bucket.pop(random_int)
-        self.last_spawned_shape_id = random_choice[0]
-        random_shape = random_choice[1]
 
+        # Generate new id for the shape
         new_id = self.gen_id()
+
+        # Save memory for the amount of blocks left in shape and color
+        self.rectangle_dict[new_id] = [4, self.random_color()]
+
+        return random_shape, new_id
+
+    def spawn_shape(self):
+        # Check if next shape already exists, if not create it otherwise use it
+        # This is for showing the next falling object
+        if self.next_shape is not None:
+            random_choice = self.next_shape
+            current_object_id = self.next_object_id
+        elif self.next_shape is None:
+            random_choice, current_object_id = self.get_next_shape()
+        else:
+            raise ("New shape was not able to be generated")
+
+        self.next_shape, self.next_object_id = self.get_next_shape()
+        # Save id of the shape
+        self.last_spawned_shape_id = random_choice[0]
+        # Take the array for the shape
+        random_shape = random_choice[1]
 
         # Choose random col to spawn
         random_col = random.randint(0, 6)
@@ -331,14 +402,12 @@ class Engine:
 
         # Save the position of spawned object for fast access later on (BOTTOM_LEFT_CORNER)
         self.assign_last_spawn_object_vars(random_shape, random_col)
-        self.last_spawned_object_id = new_id
+        self.last_spawned_object_id = current_object_id
 
         for row in range(len(random_shape)):
             for col in range(len(random_shape[0])):
                 # Spawn rectangle to the shape
-                self.state[row][random_col + col] = 0 if random_shape[row][col] == 0 else new_id
-
-        self.rectangle_dict[new_id] = [4, self.random_color()]
+                self.state[row][random_col + col] = 0 if random_shape[row][col] == 0 else current_object_id
 
     def find_rectangle(self, cur_x, cur_y, object_id):
         """
@@ -478,7 +547,6 @@ class Engine:
                 cur_col = start_col
                 continue
 
-            print(f"checking {cur_row, cur_col + 1}")
             # Check if collision happens
             if side == "right":
                 if cur_col + 1 == 10 or self.state[cur_row][cur_col + 1] != 0:
@@ -728,7 +796,6 @@ class Engine:
 
         # Check for border collision
         if not (0 <= self.last_spawned_center[0] - 1 <= 19) or not (0 <= self.last_spawned_center[1] - 1 <= 9):
-            print("border collision")
             return
 
         # 3x3 collision check
@@ -850,7 +917,6 @@ class Engine:
                 new_row = self.last_spawned_center[0] - 1 + row
                 new_col = self.last_spawned_center[1] - 1 + col
                 if self.state[new_row][new_col] != 0 and self.state[new_row][new_col] != self.last_spawned_object_id:
-                    print("New collision catch some shit")
                     return
 
                 self.state[new_row][new_col] = temp_area[row][col]
